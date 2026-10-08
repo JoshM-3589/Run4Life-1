@@ -1,11 +1,16 @@
 
-
+//CANVAS AND PLAY ASPECT RATIO
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const inputEl = document.getElementById('input');  
 const PLAY_ASPECT = 16 / 9;     // width / height → portrait
 const PLAY_MAX_HEIGHT = 0.9;    // 90% of window height
-const PLAY_MAX_WIDTH = 0.6;  
+const PLAY_MAX_WIDTH = 0.6; 
+
+
+
+
+//SLOW MOTION, JUMPING AND SLIDING 
 const SLOWMO_DISTANCE = 250;    // how close an obstacle must be to trigger slow-mo
 const SLOWMO_FACTOR = 0.35;     // 0.35 = 35% speed. Lower = slower
 const JUMP_DURATION = 0.5;      // seconds in the air
@@ -13,24 +18,40 @@ const JUMP_HEIGHT = 80;         // peak pixels above the ground
 const CHASER_JUMP_DELAY = 0.25; // chaser starts its jump later
 const JUMP_TRIGGER_DISTANCE = 180;  // jump when obstacle is this far from runner
 const JUMP_SAFE_MARGIN = 40;         // extra leeway — jump still works if closer
+const SLIDE_TRIGGER_DISTANCE = 180;   // start here; tune later
+const SLIDE_DURATION = 0.5;           // how long the slide lasts
+const SLIDE_HEIGHT = 20;
+const SLIDE_WIDTH = 50;
 const CHASER_STOP_DISTANCE = 100;      // chaser never gets closer than this to a pending obstacle
 const CHASER_JUMP_CUE = 40;           // when the obstacle is this close, jump
 const CHASER_JUMP_DURATION = 0.6;
 
+//CHASER STAGGER
 const CHASER_STAGGER_DURATION = 1.0; // how long the slowdown lasts
 const CHASER_STAGGER_FACTOR = 0.1;   // 0.2 = chaser moves at 20% speed
 
+//WORLD SPEED
 const WORLD_SPEED = 150;
 
+//DEFAULT ENTITY SIZE
 const ENTITY_WIDTH = 30;
 const ENTITY_HEIGHT = 50; 
 
+//FLOOR 
 const FLOOR_HEIGHT = 100;      // how thick the floor band is
 const FLOOR_OFFSET = 0;      // gap between entity feet and floor top
 
+//SCORING SYSTEM
 const SCORE_PER_PIXEL = 0.05;      // distance points per pixel scrolled
 const SCORE_PER_WORD = 100;        // bonus for each typed word
 const SCORE_LENGTH_BONUS = 10;     // extra per letter in the word
+
+//SLIDE OBSTACLE
+const SLIDE_OBSTACLE_WIDTH = 50;
+const SLIDE_OBSTACLE_HEIGHT = 120;
+const SLIDE_OBSTACLE_GAP = 30;   // clearance between floor and block bottom
+const SLIDE_UNLOCK_SCORE = 1000;
+const SLIDE_CHANCE_AFTER_UNLOCK = 0.5; 
 
 
 let floorScroll = 0;      
@@ -87,6 +108,22 @@ const chaserJump = {
   duration: JUMP_DURATION,
   height: JUMP_HEIGHT,
   yOffset: 0,
+  targetId: null,
+};
+const runnerSlide = {
+  active: false,
+  time: 0,
+  duration: SLIDE_DURATION,
+  height: ENTITY_HEIGHT,
+  width: ENTITY_WIDTH,
+};
+
+const chaserSlide = {
+  active: false,
+  time: 0,
+  duration: SLIDE_DURATION,
+  height: ENTITY_HEIGHT,
+  width: ENTITY_WIDTH,
   targetId: null,
 };
 
@@ -168,6 +205,59 @@ function getTimeScale() {
 
   return minScale;
 }
+function getRunnerBounds() {
+  if (runnerSlide.active) {
+    const h = runnerSlide.height;
+    const w = runnerSlide.width;
+    return {
+      x: runner.x - (w - runner.width) / 2,
+      y: runner.y + (runner.height - h),
+      width: w,
+      height: h,
+    };
+  }
+  if (runnerJump.active) {
+    return {
+      x: runner.x,
+      y: runner.y + runnerJump.yOffset,
+      width: runner.width,
+      height: runner.height,
+    };
+  }
+  return {
+    x: runner.x,
+    y: runner.y,
+    width: runner.width,
+    height: runner.height,
+  };
+}
+
+function getChaserBounds() {
+  if (chaserSlide.active) {
+    const h = chaserSlide.height;
+    const w = chaserSlide.width;
+    return {
+      x: chaser.x - (w - chaser.width) / 2,
+      y: chaser.y + (chaser.height - h),
+      width: w,
+      height: h,
+    };
+  }
+  if (chaserJump.active) {
+    return {
+      x: chaser.x,
+      y: chaser.y + chaserJump.yOffset,
+      width: chaser.width,
+      height: chaser.height,
+    };
+  }
+  return {
+    x: chaser.x,
+    y: chaser.y,
+    width: chaser.width,
+    height: chaser.height,
+  };
+}
 function pickTargetObstacle() {
   if (obstacles.length === 0) {
     targetedObstacle = null;
@@ -207,45 +297,82 @@ function drawScore() {
   ctx.textBaseline = 'top';
   ctx.fillText('SCORE: ' + getTotalScore(), canvas.width - 20, 20);
 }
+function getSlideDurationForDistance() {
+  if (obstacles.length === 0) return SLIDE_DURATION;
 
-function checkJumpTriggers() {
-  if (runnerJump.active) return;
+  const runnerCenterX = runner.x + runner.width / 2;
+  let minDist = Infinity;
+  let closest = null;                          // ← new
+
+  for (const o of obstacles) {
+    if (!o.awaitingSlide && !o.cleared) continue;
+    const obstacleCenterX = o.x + o.width / 2;
+    const d = obstacleCenterX - runnerCenterX;
+    if (d > 0 && d < minDist) {
+      minDist = d;
+      closest = o;                             // ← remember it
+    }
+  }
+
+  if (!closest) return SLIDE_DURATION;
+
+  const timeToReach = minDist / WORLD_SPEED;
+  const timeToPass = (closest.width + runner.width) / WORLD_SPEED;
+  const airtime = timeToReach + timeToPass;
+
+  return Math.max(0.5, Math.min(airtime, 1.8));
+}
+
+function checkActionTriggers() {
+  if (runnerJump.active || runnerSlide.active) return;
 
   const runnerCenterX = runner.x + runner.width / 2;
 
   for (const o of obstacles) {
-    if (!o.awaitingJump) continue;
-
     const obstacleCenterX = o.x + o.width / 2;
     const distance = obstacleCenterX - runnerCenterX;
 
-    // Ideal trigger
-    if (distance <= JUMP_TRIGGER_DISTANCE) {
+    // Jump trigger
+    if (o.awaitingJump && distance <= JUMP_TRIGGER_DISTANCE) {
       triggerRunnerJump();
       o.awaitingJump = false;
       return;
     }
+
+    // Slide trigger
+    if (o.awaitingSlide && distance <= SLIDE_TRIGGER_DISTANCE) {
+      triggerRunnerSlide();
+      o.awaitingSlide = false;
+      return;
+    }
   }
 }
-function checkChaserJump() {
-  if (chaserJump.active) return;
+function checkChaserAction() {
+  if (chaserJump.active || chaserSlide.active) return;
 
   const chaserCX = chaser.x + chaser.width / 2;
 
   for (const o of obstacles) {
-    if (!o.chaserDelay) continue;         // only pause for player-typed obstacles
-    if (o.chaserJumped) continue;         // already jumped this one
+    if (!o.chaserDelay) continue;
+    if (o.chaserJumped || o.chaserSlid) continue;
 
     const obstacleCenterX = o.x + o.width / 2;
     const gap = obstacleCenterX - chaserCX;
 
-    // Jump cue reached → go
     if (gap > 0 && gap < CHASER_JUMP_CUE) {
-      chaserJump.active = true;
-      chaserJump.time = 0;
-      chaserJump.duration = CHASER_JUMP_DURATION;
-      chaserJump.targetId = o.id;      // remember which obstacle we jumped
-      o.chaserJumped = true;           
+      if (o.type === 'slide') {
+        chaserSlide.active = true;
+        chaserSlide.time = 0;
+        chaserSlide.duration = CHASER_JUMP_DURATION;
+        chaserSlide.targetId = o.id;
+        o.chaserSlid = true;
+      } else {
+        chaserJump.active = true;
+        chaserJump.time = 0;
+        chaserJump.duration = CHASER_JUMP_DURATION;
+        chaserJump.targetId = o.id;
+        o.chaserJumped = true;
+      }
       return;
     }
   }
@@ -277,6 +404,11 @@ function triggerRunnerJump() {
   runnerJump.time = 0;
   runnerJump.duration = getJumpDurationForDistance();
 }
+function triggerRunnerSlide() {
+  runnerSlide.active = true;
+  runnerSlide.time = 0;
+  runnerSlide.duration = getSlideDurationForDistance();
+}
 function checkTypedMatch() {
   if (!targetedObstacle) {
     currentTyped = '';
@@ -291,32 +423,31 @@ function checkTypedMatch() {
     return;
   }
 
-  // Full match → destroy the obstacle
+  // Full match → resolve the obstacle
   if (currentTyped === word) {
-    // Remove from obstacles
-    const idx = obstacles.indexOf(targetedObstacle);
     targetedObstacle.cleared = true;
-    targetedObstacle.awaitingJump = true;
     targetedObstacle.chaserDelay = true;
 
-  // Score bonus
-  const lengthBonus = word.length * SCORE_LENGTH_BONUS;
-  score += SCORE_PER_WORD + lengthBonus;
+    // Choose action based on obstacle type
+    if (targetedObstacle.type === 'slide') {
+      targetedObstacle.awaitingSlide = true;
+    } else {
+      targetedObstacle.awaitingJump = true;
+    }
 
-  scorePopups.push({
-  x: targetedObstacle.x + targetedObstacle.width / 2,
-  y: targetedObstacle.y - 20,
-  text: '+' + (SCORE_PER_WORD + lengthBonus),
-  life: 0.8,
-  maxLife: 0.8,
-  });
+    // Score bonus
+    const lengthBonus = word.length * SCORE_LENGTH_BONUS;
+    score += SCORE_PER_WORD + lengthBonus;
+
+    scorePopups.push({
+      x: targetedObstacle.x + targetedObstacle.width / 2,
+      y: targetedObstacle.y - 20,
+      text: '+' + (SCORE_PER_WORD + lengthBonus),
+      life: 0.8,
+      maxLife: 0.8,
+    });
 
     currentTyped = '';
-
-    
-
-
-    // Optional: award score here later
   }
 }
 function drawObstacleWord(o) {
@@ -351,6 +482,7 @@ function drawObstacleWord(o) {
     drawX += charWidth;
   }
 }
+
 function updateJump(jump, delta) {
   if (!jump.active) return;
 
@@ -367,6 +499,28 @@ function updateJump(jump, delta) {
   // Parabolic arc: peak at duration/2
   const t = jump.time / jump.duration;         // 0 → 1
   jump.yOffset = -4 * jump.height * t * (1 - t); // classic parabola
+}
+function updateSlide(slide, entity, delta) {
+  if (!slide.active) return;
+
+  slide.time += delta;
+
+  if (slide.time >= slide.duration) {
+    slide.active = false;
+    slide.time = 0;
+    slide.height = entity.height;
+    slide.width = entity.width;
+    if (slide === chaserSlide) slide.targetId = null;
+    return;
+  }
+
+  const t = slide.time / slide.duration;
+  const easeIn = Math.min(t * 5, 1);
+  const easeOut = Math.min((1 - t) * 5, 1);
+  const phase = Math.min(easeIn, easeOut);
+
+  slide.height = entity.height + (SLIDE_HEIGHT - entity.height) * phase;
+  slide.width = entity.width + (SLIDE_WIDTH - entity.width) * phase;
 }
 
 function update(delta) {
@@ -442,25 +596,34 @@ if (blockedByObstacle) {
     spawnTimer = 0;
     spawnObstacle();
   }
-  checkJumpTriggers();
-  checkChaserJump();
+  checkActionTriggers();
+  checkChaserAction();
   updateJump(runnerJump, delta);
+  updateSlide(runnerSlide, runner, delta);
+  
 
   // Handle the chaser's delayed jump
   const chaserJumpDelta = chaserStaggerTime > 0
   ? delta * CHASER_STAGGER_FACTOR
   : delta;
   updateJump(chaserJump, chaserJumpDelta);
+  updateSlide(chaserSlide, chaser, chaserJumpDelta);
 
-  // --- Collisions ---
-  if (!runnerJump.active) {
+    // --- Collisions ---
+  // --- Runner collision (uses visual bounds) ---
+  const runnerBounds = getRunnerBounds();
   for (const o of obstacles) {
-    if (rectsOverlap(o, runner)) {
-      gameOver('An obstacle hit you!');
-      return;
+    if (rectsOverlap(o, runnerBounds)) {
+    gameOver('An obstacle hit you!');
+    return;
     }
   }
-}
+
+  // --- Chaser catches runner ---
+  const chaserBounds = getChaserBounds();
+  if (rectsOverlap(runnerBounds, chaserBounds)) {
+    gameOver('The chaser caught you!');
+  }
 
   if (rectsOverlap(runner, chaser)) {
     gameOver('The chaser caught you!');
@@ -499,46 +662,79 @@ function draw() {
 
   drawFloor();
 
-  // Runner
+// Runner
+const runnerH = runnerSlide.active ? runnerSlide.height : runner.height;
+const runnerW = runnerSlide.active ? runnerSlide.width : runner.width;
+const runnerX = runner.x - (runnerW - runner.width) / 2;
+const runnerY = runner.y + (runner.height - runnerH);
+
 ctx.fillStyle = '#4f4';
 ctx.fillRect(
-  runner.x,
-  runner.y + runnerJump.yOffset,   // ← apply jump offset
-  runner.width,
-  runner.height
+  runnerX,
+  runnerY + runnerJump.yOffset,
+  runnerW,
+  runnerH
 );
 ctx.strokeStyle = '#2a2';
 ctx.lineWidth = 2;
 ctx.strokeRect(
-  runner.x,
-  runner.y + runnerJump.yOffset,
-  runner.width,
-  runner.height
+  runnerX,
+  runnerY + runnerJump.yOffset,
+  runnerW,
+  runnerH
 );
 
 // Chaser
+const chaserH = chaserSlide.active ? chaserSlide.height : chaser.height;
+const chaserW = chaserSlide.active ? chaserSlide.width : chaser.width;
+const chaserX = chaser.x - (chaserW - chaser.width) / 2;
+const chaserY = chaser.y + (chaser.height - chaserH);
+
 ctx.fillStyle = chaserStaggerTime > 0 ? '#a55' : '#f44';
 ctx.fillRect(
-  chaser.x,
-  chaser.y + chaserJump.yOffset,   // ← apply jump offset
-  chaser.width,
-  chaser.height
+  chaserX,
+  chaserY + chaserJump.yOffset,
+  chaserW,
+  chaserH
 );
 ctx.strokeStyle = chaserStaggerTime > 0 ? '#622' : '#a22';
 ctx.strokeRect(
-  chaser.x,
-  chaser.y + chaserJump.yOffset,
-  chaser.width,
-  chaser.height
+  chaserX,
+  chaserY + chaserJump.yOffset,
+  chaserW,
+  chaserH
 );
 
   
-  obstacles.forEach(o => {
-  // Square placeholder
-  ctx.fillStyle = '#f80';
-  ctx.fillRect(o.x, o.y, o.width, o.height);
+obstacles.forEach(o => {
+  if (o.type === 'slide') {
+    // Floating block placeholder
+    ctx.fillStyle = o.cleared ? '#7a3d00' : '#f80';
+    ctx.fillRect(o.x, o.y, o.width, o.height);
+
+    // Support legs (simple, dark)
+    const legTop = o.y + o.height;
+    const legBottom = getFloorTop();
+    ctx.fillStyle = '#000';
+
+      // Two legs
+    ctx.fillRect(o.x + 5, legTop, 6, legBottom - legTop);
+    ctx.fillRect(o.x + o.width - 11, legTop, 6, legBottom - legTop);
+
+      // Cross-brace between legs
+    ctx.fillRect(o.x + 5, legTop + (legBottom - legTop) / 2, o.width - 10, 4);
+
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(o.x, o.y, o.width, o.height);
+  } else {
+    // Ground square
+    ctx.fillStyle = o.cleared ? '#7a3d00' : '#f80';
+    ctx.fillRect(o.x, o.y, o.width, o.height);
+  }
+
   drawObstacleWord(o);
-  });
+});
 
   drawScore(); 
 
@@ -571,22 +767,52 @@ function rectsOverlap(a, b) {
 
 function spawnObstacle() {
   const word = words[Math.floor(Math.random() * words.length)];
-  const obstacleSize = 40;
 
-  const lineY = canvas.height * 3 / 4;   // ← changed
+  // Decide type
+  let type = 'jump';
+  if (getTotalScore() >= SLIDE_UNLOCK_SCORE) {
+    type = Math.random() < SLIDE_CHANCE_AFTER_UNLOCK ? 'slide' : 'jump';
+  }
 
-  obstacles.push({
-    id: nextObstacleId++,
-    x: canvas.width + 30,
-    y: getFloorTop() - obstacleSize,
-    width: obstacleSize,
-    height: obstacleSize,
-    word: word,
-    cleared: false,
-    awaitingJump: false, 
-    chaserDelay: false, 
-    chaserJumped: false,
-  });
+  if (type === 'slide') {
+    const floorTop = getFloorTop();
+    const obstacleH = SLIDE_OBSTACLE_HEIGHT;
+    const obstacleW = SLIDE_OBSTACLE_WIDTH;
+    const blockBottom = floorTop - SLIDE_OBSTACLE_GAP;
+
+    obstacles.push({
+      id: nextObstacleId++,
+      x: canvas.width + 30,
+      y: blockBottom - obstacleH,   // top of the block
+      width: obstacleW,
+      height: obstacleH,
+      word: word,
+      type: 'slide',
+      cleared: false,
+      awaitingJump: false,
+      awaitingSlide: false,
+      chaserDelay: false,
+      chaserJumped: false,
+      chaserSlid: false,
+    });
+  } else {
+    const obstacleSize = 40;
+    obstacles.push({
+      id: nextObstacleId++,
+      x: canvas.width + 30,
+      y: getFloorTop() - obstacleSize,
+      width: obstacleSize,
+      height: obstacleSize,
+      word: word,
+      type: 'jump',
+      cleared: false,
+      awaitingJump: false,
+      awaitingSlide: false,
+      chaserDelay: false,
+      chaserJumped: false,
+      chaserSlid: false,
+    });
+  }
 }
 function resetGame() {
   obstacles.length = 0;
@@ -604,6 +830,7 @@ function resetGame() {
   chaserStaggerTime = 0;
   score = 0;
   distanceScore = 0;
+
   runnerJump.active = false;
   runnerJump.time = 0;
   runnerJump.yOffset = 0;
@@ -614,6 +841,17 @@ function resetGame() {
   chaserJump.time = 0;
   chaserJump.yOffset = 0;
   chaserJump.targetId = null;
+
+  runnerSlide.active = false;
+  runnerSlide.time = 0;
+  runnerSlide.height = ENTITY_HEIGHT;
+  runnerSlide.width = ENTITY_WIDTH;
+
+  chaserSlide.active = false;
+  chaserSlide.time = 0;
+  chaserSlide.height = ENTITY_HEIGHT;
+  chaserSlide.width = ENTITY_WIDTH;
+  chaserSlide.targetId = null;
 
 }
 
