@@ -27,8 +27,9 @@ const CHASER_JUMP_CUE = 40;           // when the obstacle is this close, jump
 const CHASER_JUMP_DURATION = 0.6;
 
 //CHASER STAGGER
-const CHASER_STAGGER_DURATION = 1.0; // how long the slowdown lasts
-const CHASER_STAGGER_FACTOR = 0.1;   // 0.2 = chaser moves at 20% speed
+const CHASER_STAGGER_DURATION = 1.2; // how long the slowdown lasts
+const CHASER_STAGGER_FACTOR = 0.1;   // 0.1 = chaser moves at 10% speed
+const CHASER_BLOCK_DRIFT = 0.7;   // 0.6 = drifts at 60% of floor speed when blocked
 
 //WORLD SPEED
 const WORLD_SPEED = 150;
@@ -45,6 +46,12 @@ const FLOOR_OFFSET = 0;      // gap between entity feet and floor top
 const SCORE_PER_PIXEL = 0.05;      // distance points per pixel scrolled
 const SCORE_PER_WORD = 100;        // bonus for each typed word
 const SCORE_LENGTH_BONUS = 10;     // extra per letter in the word
+const WORD_TIER_2_SCORE = 2000;
+const WORD_TIER_3_SCORE = 3000;
+const WORLD_SPEED_TIER_2 = 0.95;   // 5% slower at tier 2
+const WORLD_SPEED_TIER_3 = 0.90;   // 10% slower at tier 3
+const SPAWN_INTERVAL_TIER_2 = 3.0; // was 2.5
+const SPAWN_INTERVAL_TIER_3 = 3.5; // even more space at tier 3
 
 //SLIDE OBSTACLE
 const SLIDE_OBSTACLE_WIDTH = 50;
@@ -127,7 +134,27 @@ const chaserSlide = {
   targetId: null,
 };
 
-const words = ['fire', 'jump', 'duck', 'run', 'dash', 'leap'];
+const WORD_POOLS = {
+  easy: [
+    'run', 'jump', 'duck', 'fire', 'dash', 'leap', 'dodge', 'slide',
+    'hide', 'fast', 'move', 'stop', 'left', 'flip', 'spin', 'roll',
+    'kirk', 'speed', 'cisco', 'ball', 'data', 'sort'
+  ],
+  medium: [
+    'running', 'jumping', 'ducking', 'firefly', 'dashing', 'leaping',
+    'dodging', 'sliding', 'hiding', 'faster', 'moving', 'stopping',
+    'lifting', 'flipping', 'spinning', 'rolling', 'sigma', 'awesome',
+    'knowledge'
+  ],
+  hard: [
+    'sprinting', 'stumbling', 'dangerous', 'escalated', 'mysteries',
+    'overboard', 'trembling', 'frightened', 'accelerate', 'overcoming',
+    'synchronize', 'bewildered', 'complicated', 'transcended', 'unshaken',
+    'relentless', 'illuminated', 'disasterous', 'uncovering', 'persistent',
+    'networking', 'algorithm'
+  ],
+};
+
 const obstacles = [];      
 
 const scorePopups = [];
@@ -166,6 +193,20 @@ function getFloorTop() {
 
 function getGroundY() {
   return canvas.height * 0.75;
+}
+
+function getWorldSpeed() {
+  const total = getTotalScore();
+  if (total >= WORD_TIER_3_SCORE) return WORLD_SPEED * WORLD_SPEED_TIER_3;
+  if (total >= WORD_TIER_2_SCORE) return WORLD_SPEED * WORLD_SPEED_TIER_2;
+  return WORLD_SPEED;
+}
+
+function getSpawnInterval() {
+  const total = getTotalScore();
+  if (total >= WORD_TIER_3_SCORE) return SPAWN_INTERVAL_TIER_3;
+  if (total >= WORD_TIER_2_SCORE) return SPAWN_INTERVAL_TIER_2;
+  return spawnInterval;
 }
 
 function gameLoop(timestamp) {
@@ -290,6 +331,13 @@ function getTotalScore() {
   return Math.floor(score + distanceScore);
 }
 
+function getCurrentWordPool() {
+  const total = getTotalScore();
+  if (total >= WORD_TIER_3_SCORE) return WORD_POOLS.hard;
+  if (total >= WORD_TIER_2_SCORE) return WORD_POOLS.medium;
+  return WORD_POOLS.easy;
+}
+
 function drawScore() {
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 20px monospace';
@@ -302,7 +350,7 @@ function getSlideDurationForDistance() {
 
   const runnerCenterX = runner.x + runner.width / 2;
   let minDist = Infinity;
-  let closest = null;                          // ← new
+  let closest = null;
 
   for (const o of obstacles) {
     if (!o.awaitingSlide && !o.cleared) continue;
@@ -310,14 +358,15 @@ function getSlideDurationForDistance() {
     const d = obstacleCenterX - runnerCenterX;
     if (d > 0 && d < minDist) {
       minDist = d;
-      closest = o;                             // ← remember it
+      closest = o;
     }
   }
 
   if (!closest) return SLIDE_DURATION;
 
-  const timeToReach = minDist / WORLD_SPEED;
-  const timeToPass = (closest.width + runner.width) / WORLD_SPEED;
+  const speed = getWorldSpeed();                    // ← define once
+  const timeToReach = minDist / speed;
+  const timeToPass = (closest.width + runner.width) / speed;   // ← use `speed`
   const airtime = timeToReach + timeToPass;
 
   return Math.max(0.5, Math.min(airtime, 1.8));
@@ -393,8 +442,9 @@ function getJumpDurationForDistance() {
   if (minDist === Infinity) return JUMP_DURATION;
 
   // Time for the obstacle to reach and pass the runner
-  const timeToReach = minDist / WORLD_SPEED;
-  const timeToPass = (runner.width + 40) / WORLD_SPEED;   // obstacle width + buffer
+  const speed = getWorldSpeed();
+  const timeToReach = minDist / speed;
+  const timeToPass = (runner.width + 40) / speed;
   const airtime = timeToReach + timeToPass;
 
   return Math.max(0.4, Math.min(airtime, 1.5));   // clamp
@@ -524,6 +574,8 @@ function updateSlide(slide, entity, delta) {
 }
 
 function update(delta) {
+  console.log('score:', getTotalScore(), '| worldSpeed:', getWorldSpeed());
+  const worldSpeed = getWorldSpeed();   // compute once per frame
     // --- Chaser movement ---
   const runnerCX = runner.x + runner.width / 2;
   const runnerCY = runner.y + runner.height / 2;
@@ -559,7 +611,7 @@ if (chaserStaggerTime > 0) {
 
 if (blockedByObstacle) {
   // Slide with the floor — appears stationary relative to the ground
-  chaser.x -= WORLD_SPEED * delta * 0.6;
+  chaser.x -= worldSpeed * delta * CHASER_BLOCK_DRIFT;
 } else if (dist > 1) {
   chaser.x += (dx / dist) * chaserSpeed * delta;
   chaser.y += (dy / dist) * chaserSpeed * delta;
@@ -567,11 +619,11 @@ if (blockedByObstacle) {
 
 
   // --- Floor scroll ---
-  floorScroll -= WORLD_SPEED * delta;
+  floorScroll -= getWorldSpeed() * delta;
   if (floorScroll <= -80) floorScroll = 0;
 
   // --- Distance score ---
-  distanceScore += WORLD_SPEED * delta * SCORE_PER_PIXEL;
+  distanceScore += worldSpeed * delta * SCORE_PER_PIXEL;
 
   for (let i = scorePopups.length - 1; i >= 0; i--) {
   scorePopups[i].life -= delta;
@@ -580,7 +632,8 @@ if (blockedByObstacle) {
   }
 
   // --- Move obstacles ---
-  obstacles.forEach(o => o.x -= WORLD_SPEED * delta);
+
+  obstacles.forEach(o => o.x -= worldSpeed * delta);
 
   // --- Remove off-screen obstacles ---
   for (let i = obstacles.length - 1; i >= 0; i--) {
@@ -766,7 +819,8 @@ function rectsOverlap(a, b) {
 
 
 function spawnObstacle() {
-  const word = words[Math.floor(Math.random() * words.length)];
+  const pool = getCurrentWordPool();
+  const word = pool[Math.floor(Math.random() * pool.length)];
 
   // Decide type
   let type = 'jump';
