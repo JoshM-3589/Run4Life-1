@@ -27,6 +27,12 @@ const ENTITY_HEIGHT = 50;
 
 const FLOOR_HEIGHT = 100;      // how thick the floor band is
 const FLOOR_OFFSET = 0;      // gap between entity feet and floor top
+
+const SCORE_PER_PIXEL = 0.05;      // distance points per pixel scrolled
+const SCORE_PER_WORD = 100;        // bonus for each typed word
+const SCORE_LENGTH_BONUS = 10;     // extra per letter in the word
+
+
 let floorScroll = 0;      
 
 let chaserStaggerTime = 0;          // seconds remaining on the stagger
@@ -39,6 +45,11 @@ let rafId;
 let targetedObstacle = null;
 let currentTyped ='';
 let nextObstacleId = 0; 
+let score = 0;
+let distanceScore = 0;      // accumulates over time (as a float)
+let lastHudUpdate = 0;      // for throttling HUD redraws
+
+
 
 // const runner = {
 //   x: canvas.width / 2 - ENTITY_WIDTH / 2,
@@ -80,7 +91,9 @@ const chaserJump = {
 };
 
 const words = ['fire', 'jump', 'duck', 'run', 'dash', 'leap'];
-const obstacles = [];       
+const obstacles = [];      
+
+const scorePopups = [];
 
 
 
@@ -182,6 +195,19 @@ function pickTargetObstacle() {
     currentTyped = '';
   }
 }
+
+function getTotalScore() {
+  return Math.floor(score + distanceScore);
+}
+
+function drawScore() {
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 20px monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.fillText('SCORE: ' + getTotalScore(), canvas.width - 20, 20);
+}
+
 function checkJumpTriggers() {
   if (runnerJump.active) return;
 
@@ -272,6 +298,18 @@ function checkTypedMatch() {
     targetedObstacle.cleared = true;
     targetedObstacle.awaitingJump = true;
     targetedObstacle.chaserDelay = true;
+
+  // Score bonus
+  const lengthBonus = word.length * SCORE_LENGTH_BONUS;
+  score += SCORE_PER_WORD + lengthBonus;
+
+  scorePopups.push({
+  x: targetedObstacle.x + targetedObstacle.width / 2,
+  y: targetedObstacle.y - 20,
+  text: '+' + (SCORE_PER_WORD + lengthBonus),
+  life: 0.8,
+  maxLife: 0.8,
+  });
 
     currentTyped = '';
 
@@ -378,6 +416,15 @@ if (blockedByObstacle) {
   floorScroll -= WORLD_SPEED * delta;
   if (floorScroll <= -80) floorScroll = 0;
 
+  // --- Distance score ---
+  distanceScore += WORLD_SPEED * delta * SCORE_PER_PIXEL;
+
+  for (let i = scorePopups.length - 1; i >= 0; i--) {
+  scorePopups[i].life -= delta;
+  scorePopups[i].y -= 40 * delta;   // drift upward
+  if (scorePopups[i].life <= 0) scorePopups.splice(i, 1);
+  }
+
   // --- Move obstacles ---
   obstacles.forEach(o => o.x -= WORLD_SPEED * delta);
 
@@ -422,7 +469,8 @@ if (blockedByObstacle) {
 
 function gameOver(reason) {
   cancelAnimationFrame(rafId);
-  alert('Game Over: ' + reason);
+  const finalScore = getTotalScore();
+  alert('Game Over: ' + reason + '\n\nFinal Score: ' + finalScore);
   resetGame();
   lastTime = performance.now();
   rafId = requestAnimationFrame(gameLoop);
@@ -491,6 +539,17 @@ ctx.strokeRect(
   ctx.fillRect(o.x, o.y, o.width, o.height);
   drawObstacleWord(o);
   });
+
+  drawScore(); 
+
+  scorePopups.forEach(p => {
+  const alpha = p.life / p.maxLife;
+  ctx.fillStyle = `rgba(255, 215, 0, ${alpha})`;
+  ctx.font = 'bold 18px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(p.text, p.x, p.y);
+  });
+
   const timeScale = getTimeScale();
   if (timeScale < 1) {
     // Fade the intensity based on how slow it is
@@ -543,6 +602,8 @@ function resetGame() {
   spawnTimer = 0;
   lastTime = 0;
   chaserStaggerTime = 0;
+  score = 0;
+  distanceScore = 0;
   runnerJump.active = false;
   runnerJump.time = 0;
   runnerJump.yOffset = 0;
