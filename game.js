@@ -2,11 +2,24 @@
 //CANVAS AND PLAY ASPECT RATIO
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
 const inputEl = document.getElementById('input');  
 const PLAY_ASPECT = 16 / 9;     // width / height → portrait
 const PLAY_MAX_HEIGHT = 0.9;    // 90% of window height
 const PLAY_MAX_WIDTH = 0.6; 
 
+const runnerSheet = new Image();
+runnerSheet.src = 'sprites/runner.png';
+
+const FRAME_W = 120;
+const FRAME_H = 200;
+const RUN_FRAMES = 10;
+
+const runnerAnim = {
+  frame: 0,
+  timer: 0,
+  fps: 10,
+};
 
 
 
@@ -576,6 +589,12 @@ function updateSlide(slide, entity, delta) {
 function update(delta) {
   console.log('score:', getTotalScore(), '| worldSpeed:', getWorldSpeed());
   const worldSpeed = getWorldSpeed();   // compute once per frame
+
+  runnerAnim.timer += delta;
+  if (runnerAnim.timer >= 1 / runnerAnim.fps) {
+    runnerAnim.timer = 0;
+    runnerAnim.frame = (runnerAnim.frame + 1) % RUN_FRAMES;
+  }
     // --- Chaser movement ---
   const runnerCX = runner.x + runner.width / 2;
   const runnerCY = runner.y + runner.height / 2;
@@ -719,23 +738,33 @@ function draw() {
 const runnerH = runnerSlide.active ? runnerSlide.height : runner.height;
 const runnerW = runnerSlide.active ? runnerSlide.width : runner.width;
 const runnerX = runner.x - (runnerW - runner.width) / 2;
-const runnerY = runner.y + (runner.height - runnerH);
+const runnerY = runner.y + (runner.height - runnerH) + runnerJump.yOffset;
 
+// Debug reference rectangle (behind) — remove after tuning
 ctx.fillStyle = '#4f4';
-ctx.fillRect(
-  runnerX,
-  runnerY + runnerJump.yOffset,
-  runnerW,
-  runnerH
-);
+ctx.fillRect(runnerX, runnerY, runnerW, runnerH);
+
 ctx.strokeStyle = '#2a2';
 ctx.lineWidth = 2;
-ctx.strokeRect(
-  runnerX,
-  runnerY + runnerJump.yOffset,
-  runnerW,
-  runnerH
-);
+ctx.strokeRect(runnerX, runnerY, runnerW, runnerH);
+
+// Sprite on top — scaled up, anchored to feet
+if (runnerSheet.complete && runnerSheet.naturalWidth > 0) {
+  const SPRITE_SCALE = 1.9;   // tune this
+
+  const spriteW = runnerW * SPRITE_SCALE;
+  const spriteH = runnerH * SPRITE_SCALE;
+  const spriteX = runnerX + (runnerW - spriteW) / 2;   // center horizontally
+  const spriteY = runnerY + (runnerH - spriteH);       // anchor bottom to feet
+
+  const sx = runnerAnim.frame * FRAME_W;
+
+  ctx.drawImage(
+    runnerSheet,
+    sx, 0, FRAME_W, FRAME_H,
+    spriteX, spriteY, spriteW, spriteH
+  );
+}
 
 // Chaser
 const chaserH = chaserSlide.active ? chaserSlide.height : chaser.height;
@@ -932,6 +961,8 @@ function resizeCanvas() {
   if (typeof chaser !== 'undefined') {
     chaser.y = lineY;
   }
+
+  ctx.imageSmoothingEnabled = false;
 }
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
