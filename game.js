@@ -11,15 +11,26 @@ const PLAY_MAX_WIDTH = 0.6;
 //Running Sprite
 const runSheet = new Image();
 runSheet.src = 'sprites/runner-run.png';
-const FRAME_W = 120;
-const FRAME_H = 200;
 const RUN_FRAMES = 10;
+const RUN_FRAME_W = 120;
+const RUN_FRAME_H = 200;
 
 //Jumping Sprite
 const jumpSheet = new Image();
 jumpSheet.src = 'sprites/runner-jump.png';
 const JUMP_FRAMES = 10;
+const JUMP_FRAME_W = 120;
+const JUMP_FRAME_H = 200;
 
+//Sliding Sprite
+const slideSheet = new Image();
+slideSheet.src = 'sprites/runner-slide.png';
+const SLIDE_FRAMES = 14;
+const SLIDE_FRAME_W = 200;
+const SLIDE_FRAME_H = 200;
+
+
+//Runner Animation Initializing
 const runnerAnim = {
   frame: 0,
   timer: 0,
@@ -55,6 +66,9 @@ const WORLD_SPEED = 150;
 //DEFAULT ENTITY SIZE
 const ENTITY_WIDTH = 30;
 const ENTITY_HEIGHT = 50; 
+
+//JUMP HITBOX
+const JUMP_HITBOX_HEIGHT = 30;   
 
 //FLOOR 
 const FLOOR_HEIGHT = 100;      // how thick the floor band is
@@ -264,6 +278,19 @@ function getTimeScale() {
 
   return minScale;
 }
+function getJumpShrinkFactor() {
+  if (!runnerJump.active) return 1;
+
+  const t = runnerJump.time / runnerJump.duration;
+  const easeIn = Math.min(t * 5, 1);
+  const easeOut = Math.min((1 - t) * 5, 1);
+  const phase = Math.min(easeIn, easeOut);
+  const factor = 1 - (1 - JUMP_HITBOX_HEIGHT / ENTITY_HEIGHT) * phase;
+
+  console.log('t:', t.toFixed(2), '| phase:', phase.toFixed(2), '| factor:', factor.toFixed(2));
+  return factor;
+}
+
 function getRunnerBounds() {
   if (runnerSlide.active) {
     const h = runnerSlide.height;
@@ -276,11 +303,13 @@ function getRunnerBounds() {
     };
   }
   if (runnerJump.active) {
+    const h = runner.height * getJumpShrinkFactor();
+    const w = runner.width;
     return {
       x: runner.x,
-      y: runner.y + runnerJump.yOffset,
-      width: runner.width,
-      height: runner.height,
+      y: runner.y + (runner.height - h) + runnerJump.yOffset,
+      width: w,
+      height: h,
     };
   }
   return {
@@ -290,6 +319,9 @@ function getRunnerBounds() {
     height: runner.height,
   };
 }
+
+
+
 
 function getChaserBounds() {
   if (chaserSlide.active) {
@@ -479,6 +511,9 @@ function triggerRunnerSlide() {
   runnerSlide.active = true;
   runnerSlide.time = 0;
   runnerSlide.duration = getSlideDurationForDistance();
+
+  runnerAnim.frame = 0;
+  runnerAnim.timer = 0;
 }
 function checkTypedMatch() {
   if (!targetedObstacle) {
@@ -564,6 +599,11 @@ function updateJump(jump, delta) {
     jump.time = 0;
     jump.yOffset = 0;
     if (jump === chaserJump) jump.targetId = null; 
+
+    if (jump === runnerJump) {
+      runnerAnim.frame = runnerAnim.frame % RUN_FRAMES;
+      runnerAnim.timer = 0;
+    }
     return;
   }
 
@@ -582,6 +622,11 @@ function updateSlide(slide, entity, delta) {
     slide.height = entity.height;
     slide.width = entity.width;
     if (slide === chaserSlide) slide.targetId = null;
+
+    if (slide === runnerSlide) {
+      runnerAnim.frame = runnerAnim.frame % RUN_FRAMES;
+      runnerAnim.timer = 0;
+    }
     return;
   }
 
@@ -597,10 +642,15 @@ function updateSlide(slide, entity, delta) {
 function update(delta) {
   const worldSpeed = getWorldSpeed();   // compute once per frame
 
-  const activeFrameCount = runnerJump.active ? JUMP_FRAMES : RUN_FRAMES;
+  const activeFrameCount = runnerJump.active ? JUMP_FRAMES
+                       : runnerSlide.active ? SLIDE_FRAMES
+                       : RUN_FRAMES;
+
   const activeFps = runnerJump.active
-    ? JUMP_FRAMES / runnerJump.duration
-    : runnerAnim.fps;
+                  ? JUMP_FRAMES / runnerJump.duration
+                  : runnerSlide.active
+                    ? SLIDE_FRAMES / runnerSlide.duration
+                    : runnerAnim.fps;
 
   runnerAnim.timer += delta;
   if (runnerAnim.timer >= 1 / activeFps) {
@@ -752,30 +802,37 @@ const runnerW = runnerSlide.active ? runnerSlide.width : runner.width;
 const runnerX = runner.x - (runnerW - runner.width) / 2;
 const runnerY = runner.y + (runner.height - runnerH) + runnerJump.yOffset;
 
-// Debug reference rectangle (behind) — remove after tuning
-ctx.fillStyle = '#4f4';
-ctx.fillRect(runnerX, runnerY, runnerW, runnerH);
+  // // Debug reference rectangle (behind) — remove after tuning
+  // const dbg = getRunnerBounds();
+  // ctx.fillStyle = '#4f4';
+  // ctx.fillRect(dbg.x, dbg.y, dbg.width, dbg.height);
+  // ctx.strokeStyle = '#2a2';
+  // ctx.lineWidth = 2;
+  // ctx.strokeRect(dbg.x, dbg.y, dbg.width, dbg.height);
 
-ctx.strokeStyle = '#2a2';
-ctx.lineWidth = 2;
-ctx.strokeRect(runnerX, runnerY, runnerW, runnerH);
+// 2. Sprite — always full standing size
+const SPRITE_SCALE = 2.0;
 
-// Pick the active sheet
-const activeSheet = runnerJump.active ? jumpSheet : runSheet;
+const spriteW = ENTITY_WIDTH * SPRITE_SCALE;
+const spriteH = ENTITY_HEIGHT * SPRITE_SCALE;
+
+const spriteX = runner.x + (runner.width - spriteW) / 2;
+const spriteY = runner.y + runner.height - spriteH + runnerJump.yOffset;
+
+// Pick sheet and frame size
+const isJumping = runnerJump.active;
+const isSliding = runnerSlide.active;
+
+const activeSheet = isSliding ? slideSheet : isJumping ? jumpSheet : runSheet;
+const activeFrameW = isSliding ? SLIDE_FRAME_W : isJumping ? JUMP_FRAME_W : RUN_FRAME_W;
+const activeFrameH = isSliding ? SLIDE_FRAME_H : isJumping ? JUMP_FRAME_H : RUN_FRAME_H;
 
 if (activeSheet.complete && activeSheet.naturalWidth > 0) {
-  const SPRITE_SCALE = 1.9;
-
-  const spriteW = runnerW * SPRITE_SCALE;
-  const spriteH = runnerH * SPRITE_SCALE;
-  const spriteX = runnerX + (runnerW - spriteW) / 2;
-  const spriteY = runnerY + (runnerH - spriteH);
-
-  const sx = runnerAnim.frame * FRAME_W;
+  const sx = runnerAnim.frame * activeFrameW;
 
   ctx.drawImage(
     activeSheet,
-    sx, 0, FRAME_W, FRAME_H,
+    sx, 0, activeFrameW, activeFrameH,
     spriteX, spriteY, spriteW, spriteH
   );
 }
