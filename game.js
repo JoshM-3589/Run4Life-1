@@ -8,12 +8,17 @@ const PLAY_ASPECT = 16 / 9;     // width / height → portrait
 const PLAY_MAX_HEIGHT = 0.9;    // 90% of window height
 const PLAY_MAX_WIDTH = 0.6; 
 
-const runnerSheet = new Image();
-runnerSheet.src = 'sprites/runner.png';
-
+//Running Sprite
+const runSheet = new Image();
+runSheet.src = 'sprites/runner-run.png';
 const FRAME_W = 120;
 const FRAME_H = 200;
 const RUN_FRAMES = 10;
+
+//Jumping Sprite
+const jumpSheet = new Image();
+jumpSheet.src = 'sprites/runner-jump.png';
+const JUMP_FRAMES = 10;
 
 const runnerAnim = {
   frame: 0,
@@ -466,6 +471,9 @@ function triggerRunnerJump() {
   runnerJump.active = true;
   runnerJump.time = 0;
   runnerJump.duration = getJumpDurationForDistance();
+
+  runnerAnim.frame = 0;   // ← start from frame 0
+  runnerAnim.timer = 0;
 }
 function triggerRunnerSlide() {
   runnerSlide.active = true;
@@ -587,13 +595,17 @@ function updateSlide(slide, entity, delta) {
 }
 
 function update(delta) {
-  console.log('score:', getTotalScore(), '| worldSpeed:', getWorldSpeed());
   const worldSpeed = getWorldSpeed();   // compute once per frame
 
+  const activeFrameCount = runnerJump.active ? JUMP_FRAMES : RUN_FRAMES;
+  const activeFps = runnerJump.active
+    ? JUMP_FRAMES / runnerJump.duration
+    : runnerAnim.fps;
+
   runnerAnim.timer += delta;
-  if (runnerAnim.timer >= 1 / runnerAnim.fps) {
+  if (runnerAnim.timer >= 1 / activeFps) {
     runnerAnim.timer = 0;
-    runnerAnim.frame = (runnerAnim.frame + 1) % RUN_FRAMES;
+    runnerAnim.frame = (runnerAnim.frame + 1) % activeFrameCount;
   }
     // --- Chaser movement ---
   const runnerCX = runner.x + runner.width / 2;
@@ -748,19 +760,21 @@ ctx.strokeStyle = '#2a2';
 ctx.lineWidth = 2;
 ctx.strokeRect(runnerX, runnerY, runnerW, runnerH);
 
-// Sprite on top — scaled up, anchored to feet
-if (runnerSheet.complete && runnerSheet.naturalWidth > 0) {
-  const SPRITE_SCALE = 1.9;   // tune this
+// Pick the active sheet
+const activeSheet = runnerJump.active ? jumpSheet : runSheet;
+
+if (activeSheet.complete && activeSheet.naturalWidth > 0) {
+  const SPRITE_SCALE = 1.9;
 
   const spriteW = runnerW * SPRITE_SCALE;
   const spriteH = runnerH * SPRITE_SCALE;
-  const spriteX = runnerX + (runnerW - spriteW) / 2;   // center horizontally
-  const spriteY = runnerY + (runnerH - spriteH);       // anchor bottom to feet
+  const spriteX = runnerX + (runnerW - spriteW) / 2;
+  const spriteY = runnerY + (runnerH - spriteH);
 
   const sx = runnerAnim.frame * FRAME_W;
 
   ctx.drawImage(
-    runnerSheet,
+    activeSheet,
     sx, 0, FRAME_W, FRAME_H,
     spriteX, spriteY, spriteW, spriteH
   );
@@ -917,6 +931,8 @@ function resetGame() {
   runnerJump.active = false;
   runnerJump.time = 0;
   runnerJump.yOffset = 0;
+  runnerAnim.frame = 0;
+  runnerAnim.timer = 0;
 
   chaserJump.active = false;
   chaserJump.pending = false;
