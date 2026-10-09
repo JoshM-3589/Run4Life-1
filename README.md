@@ -43,7 +43,7 @@ Open `index.html` in any modern browser — no build step required.
 - Add Main Menu with animated menu containing the "PLAY" button and Menu music. 
 - Inside "PLAY" Button should contain unlockable maps based on the highscore the player has hit 
 - Add 3 Lives and when hit by an obstacle slow down player.
-
+- the typing should not reset when typo.
 
 
 
