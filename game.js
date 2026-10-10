@@ -68,7 +68,7 @@ const ENTITY_WIDTH = 30;
 const ENTITY_HEIGHT = 50; 
 
 //JUMP HITBOX
-const JUMP_HITBOX_HEIGHT = 30;   
+const JUMP_HITBOX_HEIGHT = 15;   
 
 //FLOOR 
 const FLOOR_HEIGHT = 100;      // how thick the floor band is
@@ -99,7 +99,7 @@ let chaserStaggerTime = 0;          // seconds remaining on the stagger
 
 let lastTime = 0;
 let spawnTimer = 0;
-const spawnInterval = 2.5;
+const spawnInterval = 4;
 let rafId;
 
 let targetedObstacle = null;
@@ -297,7 +297,7 @@ function getRunnerBounds() {
     const w = runnerSlide.width;
     return {
       x: runner.x - (w - runner.width) / 2,
-      y: runner.y + (runner.height - h),
+      y: runner.y + (runner.height - h) + runnerJump.yOffset,
       width: w,
       height: h,
     };
@@ -812,16 +812,16 @@ const runnerY = runner.y + (runner.height - runnerH) + runnerJump.yOffset;
 
 // 2. Sprite — always full standing size
 const SPRITE_SCALE = 2.0;
+const SLIDE_STRETCH_X = 1.5;
 
-const spriteW = ENTITY_WIDTH * SPRITE_SCALE;
+const isJumping = runnerJump.active;
+const isSliding = runnerSlide.active;
+
+const spriteW = ENTITY_WIDTH * SPRITE_SCALE * (isSliding ? SLIDE_STRETCH_X : 1);
 const spriteH = ENTITY_HEIGHT * SPRITE_SCALE;
 
 const spriteX = runner.x + (runner.width - spriteW) / 2;
 const spriteY = runner.y + runner.height - spriteH + runnerJump.yOffset;
-
-// Pick sheet and frame size
-const isJumping = runnerJump.active;
-const isSliding = runnerSlide.active;
 
 const activeSheet = isSliding ? slideSheet : isJumping ? jumpSheet : runSheet;
 const activeFrameW = isSliding ? SLIDE_FRAME_W : isJumping ? JUMP_FRAME_W : RUN_FRAME_W;
